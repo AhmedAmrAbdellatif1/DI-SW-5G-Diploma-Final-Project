@@ -106,7 +106,7 @@ public:
 class EthFrame
 {
 private:
-    const array<uint8_t, 8> preamble{0xfb, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5};
+    array<uint8_t, 8> preamble{0xfb, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5};
     array<uint8_t, 6> destAddress;
     array<uint8_t, 6> sourceAddress;
     array<uint8_t, 2> etherSize;
@@ -152,7 +152,7 @@ public:
 
     // Method to construct the Ethernet frame
     vector<uint8_t> constructFrame(uint32_t MinNumOfIFGsPerPacket)
-    {
+    {   
         // Add Destination MAC
         frame.insert(frame.end(), destAddress.begin(), destAddress.end());
 
@@ -172,7 +172,6 @@ public:
         // Add Preamble (7 bytes) + Start Frame Delimiter (SFD) (1 byte)
         frame.insert(frame.begin(), preamble.begin(), preamble.end());
 
-
         // Insert minimum number of IFGS per packet
         for (uint32_t i = 0; i < MinNumOfIFGsPerPacket; i++)
         {
@@ -184,6 +183,7 @@ public:
         {
             frame.push_back(0x07);
         }
+
         return frame;
     }
 };
@@ -255,14 +255,19 @@ int main()
     parseConfigurations configuration("first_milestone.txt");
     packetStreaming fullStream{configuration, data};
     fullPacketStream = fullStream.constructStream();
-
     // Create and open a text file
     ofstream MyFile("packets.txt");
-    vector<uint32_t> &words = reinterpret_cast<vector<uint32_t> &>(fullPacketStream);
+    uint8_t counter;
     // Write to the file
-    for (auto word : words)
+    for (auto byte : fullPacketStream)
     {
-        MyFile << hex << setw(8) << setfill('0') << static_cast<int>(word) << endl;
+        MyFile << hex << setw(2) << setfill('0') << static_cast<uint64_t>(byte);
+        if(counter == 4) {
+            MyFile << endl;
+            counter = 0;
+        } else {
+            counter++;
+        }
     }
     // Close the file
     MyFile.close();
