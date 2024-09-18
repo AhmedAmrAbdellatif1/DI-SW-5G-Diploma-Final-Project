@@ -220,10 +220,16 @@ public:
 
     vector<uint8_t> constructStream()
     {
-        uint64_t totalBursts{(captureSize * 1000) / burstPeriodicity};
-        uint64_t IFGperBurst{(lineRate * burstPeriodicity * 1000) / 8};
+        // Construct Ethernet Frame
         EthFrame burst{destAddress, sourceAddress, etherSize, payload};
         auto tempFrame = burst.constructFrame(minNumOfIFGsPerPacket);
+
+        // Calculate Configurations
+        uint64_t totalTransmisson{(lineRate*captureSize*1000000)/8};
+        uint64_t totalBursts{(captureSize * 1000) / burstPeriodicity};
+        uint64_t burstLength{totalTransmisson/totalBursts};
+        uint64_t IFGperBurst{burstLength - (burstSize*tempFrame.size())};
+
         periodicIFG.assign(IFGperBurst, 0x07);
 
         for (uint64_t i = 0; i < totalBursts; i++)
@@ -243,21 +249,11 @@ public:
 
 int main()
 {
-    uint8_t LineRate{10};
-    uint8_t CaptureSizeMs{10};
-    uint8_t MinNumOfIFGsPerPacket{12};
-    uint64_t DestAddress{0x010101010101};
-    uint64_t SourceAddress{0x333333333333};
-    uint16_t MaxPacketSize{1500};
-    uint8_t BurstSize{3};
-    uint32_t BurstPeriodicity_us{100};
     vector<uint8_t> data = {0x0};
     vector<uint8_t> fullPacketStream;
 
     parseConfigurations configuration("first_milestone.txt");
-
     packetStreaming fullStream{configuration, data};
-
     fullPacketStream = fullStream.constructStream();
 
     // Create and open a text file
@@ -270,22 +266,6 @@ int main()
     }
     // Close the file
     MyFile.close();
-
-
-
-
-
-    // for (auto byte : fullFrame)
-    // {
-    //     cout << hex << setw(2) << setfill('0') << static_cast<int>(byte) << endl;
-    // }
-
-    // for (auto word : words)
-    // {
-    //     cout << hex << setw(8) << setfill('0') << static_cast<int>(word) << endl;
-    // }
-    // cout << "\n";
-    // cout << endl;
 
     return 0;
 }
