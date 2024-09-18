@@ -153,8 +153,6 @@ public:
     // Method to construct the Ethernet frame
     vector<uint8_t> constructFrame(uint32_t MinNumOfIFGsPerPacket)
     {
-        uint8_t IFG{0x07};
-
         // Add Destination MAC
         frame.insert(frame.end(), destAddress.begin(), destAddress.end());
 
@@ -174,16 +172,17 @@ public:
         // Add Preamble (7 bytes) + Start Frame Delimiter (SFD) (1 byte)
         frame.insert(frame.begin(), preamble.begin(), preamble.end());
 
+
         // Insert minimum number of IFGS per packet
         for (uint32_t i = 0; i < MinNumOfIFGsPerPacket; i++)
         {
-            frame.push_back(IFG);
+            frame.push_back(0x07);
         }
 
         // 4-Byte alignment
         while (frame.size() % 4)
         {
-            frame.push_back(IFG);
+            frame.push_back(0x07);
         }
         return frame;
     }
@@ -207,14 +206,14 @@ private:
 public:
     packetStreaming(const parseConfigurations &configuration, vector<uint8_t> data)
     {
-        uint64_t lineRate = uint64_t(configuration.LineRate);
-        uint64_t captureSize = uint64_t(configuration.CaptureSizeMs);
-        uint8_t minNumOfIFGsPerPacket = configuration.MinNumOfIFGsPerPacket;
-        array<uint8_t, 6> destAddress = intToArray<uint64_t, 6>(configuration.DestAddress);
-        array<uint8_t, 6> sourceAddress = intToArray<uint64_t, 6>(configuration.SourceAddress);
-        array<uint8_t, 2> etherSize = intToArray<uint64_t, 2>(configuration.MaxPacketSize - ETH_HEADER_SIZE);
-        uint8_t burstSize = configuration.BurstSize;
-        uint64_t burstPeriodicity = uint64_t(configuration.BurstPeriodicity_us);
+        lineRate = static_cast<uint64_t>(configuration.LineRate);
+        captureSize = static_cast<uint64_t>(configuration.CaptureSizeMs);
+        minNumOfIFGsPerPacket = configuration.MinNumOfIFGsPerPacket;
+        destAddress = intToArray<uint64_t, 6>(configuration.DestAddress);
+        sourceAddress = intToArray<uint64_t, 6>(configuration.SourceAddress);
+        etherSize = intToArray<uint64_t, 2>(configuration.MaxPacketSize - ETH_HEADER_SIZE);
+        burstSize = configuration.BurstSize;
+        burstPeriodicity = static_cast<uint64_t>(configuration.BurstPeriodicity_us);
         data.resize(configuration.MaxPacketSize - ETH_HEADER_SIZE);
         payload = data;
     }
