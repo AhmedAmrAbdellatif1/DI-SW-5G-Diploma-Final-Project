@@ -2,7 +2,7 @@
 // Name: Ahmed Amr Abdellatif Mahmoud                                                                   //
 // Project: DISW 5G Siemens Diploma - First Milestone                                                   //
 // Description: Generate a stream of ethernet frames                                                    //
-// Last Modification : 9/19/2024 8:07 PM                                                                //
+// Last Modification : 9/19/2024 10:10 PM                                                               //
 //======================================================================================================//
 
 #include <iostream>
@@ -282,6 +282,7 @@ public:
         periodicIFG.assign(IFGperBurst, 0x07);
 
         // Build the full packet stream
+        cout << ".....Start generating the stream....." << endl;
         for (uint64_t i = 0; i < totalBursts; i++)
         {
             // Insert burstSize number of packets in each burst
@@ -292,6 +293,14 @@ public:
             // Insert periodic IFG after each burst
             fullPacket.insert(fullPacket.end(), periodicIFG.begin(), periodicIFG.end());
         }
+
+        // Output the number of bytes in the generated packet stream
+        cout << ".....Done generating....." << endl;
+        cout << "Total Bytes Generated: " << uint64_t(fullPacket.size()) << endl;
+        cout << "Total Bursts Generated: " << uint64_t(totalBursts) << endl;
+        cout << "Burst Size: " << uint64_t(burstSize) << endl;
+        cout << "Total Ethernet Frames: " << uint64_t(totalBursts*burstSize) << endl;
+        cout << "Ethernet Frame Size (Including IFGs): " << uint64_t(tempFrame.size()) << endl;
 
         // Return the full packet stream
         return fullPacket;
@@ -306,6 +315,7 @@ void writePacketStreamToFile(const vector<uint8_t> &fullPacketStream, const stri
     // Counter to insert a line break after every 4 bytes
     uint8_t counter{0};
 
+    cout << ".....Start exporting stream to the text file....." << endl;
     // Loop through the fullPacketStream and write each byte to the text file
     for (auto byte : fullPacketStream)
     {
@@ -323,7 +333,7 @@ void writePacketStreamToFile(const vector<uint8_t> &fullPacketStream, const stri
             counter++;
         }
     }
-
+    cout << ".....Done exporting....." << endl;
     // Close the file after writing is done
     MyFile.close();
 }
@@ -349,8 +359,5 @@ int main()
     // Call the new function to write the full packet stream to "packets.txt"
     writePacketStreamToFile(fullPacketStream, "packets.txt");
 
-    // Output the number of bytes in the generated packet stream
-    cout << "Done generating " << fullPacketStream.size() << " bytes" << endl;
-    
     return 0;
 }
