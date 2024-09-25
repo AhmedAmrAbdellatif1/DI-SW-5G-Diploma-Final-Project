@@ -14,9 +14,16 @@
 #include <vector>
 #include <cstdint>
 #include <map>
-#include <tuple>
+#include <cmath>
+#include <random>
 
 #define ETH_HEADER_SIZE 26
+#define FRAME_PERIOD_MS 10
+#define SCS_PERIODICITY 15
+#define SUBFRAME_PER_FRAME 10
+#define SYMBOL_PER_SLOT 14
+#define RE_PER_RB 14
+
 using namespace std;
 
 // Function to convert a given number into an array of bytes, with the most significant byte at the lowest index.
@@ -34,7 +41,7 @@ array<uint8_t, my_size> intToArray(intType number)
 }
 
 // Function to convert the value to an appropriate data type (hexadecimal or decimal)
-uint64_t convertIntoInteger(string &str)
+uint64_t convertIntoInteger(string str)
 {
     if (str.find("0x") == 0) // If value is in hexadecimal format
     {
@@ -58,20 +65,27 @@ public:
     uint16_t MaxPacketSize;        // Maximum packet size (in bytes)
 
     // ORAN Configuration parameters parsed from the file
-    uint8_t SCS;          // Subcarrier spacing
-    uint16_t MaxNrb;      // Maximum no. of resource blocks
-    uint8_t NrbPerPacket; // No. of resource blocks per packet
-    string PayloadType;   //
-    string Payload;       //
+    uint8_t SCS;           // Subcarrier spacing
+    uint16_t MaxNrb;       // Maximum no. of resource blocks
+    uint16_t NrbPerPacket; // No. of resource blocks per packet
+    string PayloadType;    //
 
-    vector<int> iSamples;
-    vector<int> qSamples;
+    vector<int8_t> iqSamples;
 
     // Constructor to parse configuration values from a file
     parseConfigurations(string fileName)
     {
+        //
+        cout << "========= Start Parsing =========" << endl;
+
         // Open the file for reading
         ifstream MyReadFile(fileName);
+
+        // Check if the file opened successfully
+        if (!MyReadFile)
+        {
+            throw runtime_error("Failed to open file!");
+        }
 
         // String to hold each line from the configuration file
         string line;
@@ -106,7 +120,12 @@ public:
 
             // Store the key-value pair in the map
             config[key] = valueStr;
+
+            cout << key << ": " << valueStr << endl;
         }
+
+        //
+        cout << "========= Done Parsing =========" << endl;
 
         // Close the file
         MyReadFile.close();
@@ -121,14 +140,14 @@ public:
 
         SCS = static_cast<uint8_t>(convertIntoInteger(config["Oran.SCS"]));
         MaxNrb = static_cast<uint16_t>(convertIntoInteger(config["Oran.MaxNrb"]));
-        NrbPerPacket = static_cast<uint8_t>(convertIntoInteger(config["Oran.NrbPerPacket"]));
+        NrbPerPacket = static_cast<uint16_t>(convertIntoInteger(config["Oran.NrbPerPacket"]));
         PayloadType = config["Oran.PayloadType"];
 
-        tie(iSamples, qSamples) = parseIQSamples(config["Oran.Payload"]);
+        iqSamples = parseIQSamples(config["Oran.Payload"]);
     }
 
     // Parse IQ Samples
-    pair<vector<int>, vector<int>> parseIQSamples(string fileName)
+    vector<int8_t> parseIQSamples(string fileName)
     {
         // Open the file for reading
         ifstream file(fileName);
@@ -140,8 +159,7 @@ public:
         }
 
         // Vectors to store the two arrays of integers
-        vector<int> array1;
-        vector<int> array2;
+        vector<int8_t> samples;
 
         // String to hold each line from the file
         string line;
@@ -156,38 +174,109 @@ public:
             // Extract the two integers
             if (ss >> num1 >> num2)
             {
-                array1.push_back(num1);
-                array2.push_back(num2);
+                samples.push_back(num1);
+                samples.push_back(num2);
             }
         }
 
         // Close the file after reading
         file.close();
 
-        // Return the two arrays as a pair
-        return make_pair(array1, array2);
+        // Return the array
+        return samples;
     }
 };
 
 class OranPacket
 {
 private:
-    /* data */
+    array<uint8_t, 8> header; // 8 bytes for the combined ORAN packet header
+    vector<int8_t> iqSamples;
+    vector<uint8_t> oranPacket;
+
 public:
-    OranPacket(/* args */);
+    // Constructor for the ORAN packet to initialize the headers
+    OranPacket(uint8_t frameId, uint8_t subframeId, uint8_t slotId, uint8_t symbolId,
+               uint16_t startPrbu, uint16_t numPrbu, vector<int8_t> data)
+    {
+        // Packing the first 4 bytes (Common Header)
+        header[0] = 0x00;                              // dataDirection (1 bit), payloadVersion (3 bits), filterIndex (4 bits), all set to 0
+        header[1] = frameId;                           // frameId (8 bits)
+        header[2] = (subframeId << 4) | (slotId >> 2); // Top 4 bits of subframeId, top 6 bits of slotId
+        header[3] = (slotId << 6) | (symbolId & 0x3F); // Lower 6 bits of slotId, symbolId (6 bits)
+
+        // Packing the next 4 bytes (Section Header)
+        header[4] = 0xFF;                             // sectionId (12 bits) fixed to 4095 (0xFFF)
+        header[5] = 0xF0 | ((startPrbu >> 8) & 0x03); // Lower 4 bits of sectionId, top 2 bits of startPrbu
+        header[6] = startPrbu & 0xFF;                 // Lower 8 bits of startPrbu
+
+        if (numPrbu == 273)
+        {
+            header[7] = 0; // numPrbu (8 bits)
+        }
+        else
+        {
+            header[7] = numPrbu; // numPrbu (8 bits)
+        }
+        //
+        iqSamples = data;
+    }
+
+    // Function to
+    vector<uint8_t> getPacket()
+    {
+        //
+        oranPacket.insert(oranPacket.end(), header.begin(), header.end());
+        //
+        oranPacket.insert(oranPacket.end(), iqSamples.begin(), iqSamples.end());
+
+        return oranPacket;
+    }
 };
 
 class EcpriPacket
 {
 private:
-    /* data */
+    array<uint8_t, 8> header; // 8 bytes for the eCPRI header
+    vector<uint8_t> payload;
+    vector<uint8_t> ecpriPacket;
+
 public:
-    EcpriPacket(/* args */);
+    // Constructor to initialize the eCPRI packet header
+    EcpriPacket(uint16_t ecpriSeqid, vector<uint8_t> ecpriPayload)
+    {
+        uint16_t ecpriPayloadSize{static_cast<uint16_t>(size(ecpriPayload))};
+
+        header[0] = 0x00;                           // ecpriVersion (4 bits) + ecpriReserved (3 bits) + ecpriConcatenation (1 bit)
+        header[1] = 0x00;                           // ecpriMessage
+        header[2] = (ecpriPayloadSize >> 8) & 0xFF; // Upper 8 bits of ecpriPayloadSize
+        header[3] = ecpriPayloadSize & 0xFF;        // Lower 8 bits of ecpriPayloadSize
+        header[4] = 0x00;                           // Upper 8 bits of ecpriRTCid/ecpriPcid
+        header[5] = 0x00;                           // Lower 8 bits of ecpriRTCid/ecpriPcid
+        header[6] = (ecpriSeqid >> 8) & 0xFF;       // Upper 8 bits of ecpriSeqid
+        header[7] = ecpriSeqid & 0xFF;              // Lower 8 bits of ecpriSeqid
+
+        payload = ecpriPayload;
+    }
+
+    // Function to
+    vector<uint8_t> getPacket()
+    {
+        //
+        ecpriPacket.insert(ecpriPacket.end(), header.begin(), header.end());
+        //
+        ecpriPacket.insert(ecpriPacket.end(), payload.begin(), payload.end());
+
+        return ecpriPacket;
+    }
 };
 
-class EthFrame
+class EthernetPacket
 {
 private:
+    //
+    uint32_t minNumOfIFGsPerPacket;
+
     // Ethernet frame preamble (7 bytes) and Start Frame Delimiter (SFD) (1 byte)
     const array<uint8_t, 8> preamble{0xfb, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0xd5};
 
@@ -210,9 +299,9 @@ private:
     vector<uint8_t> frame;
 
 public:
-    // EthFrame Constructor
-    EthFrame(const array<uint8_t, 6> &dest, const array<uint8_t, 6> &src, const array<uint8_t, 2> &size, const vector<uint8_t> &data)
-        : destAddress(dest), sourceAddress(src), etherSize(size), payload(move(data))
+    // EthernetPacket Constructor
+    EthernetPacket(const array<uint8_t, 6> &dest, const array<uint8_t, 6> &src, const array<uint8_t, 2> &size, const vector<uint8_t> &data, const uint32_t &MinNumOfIFGsPerPacket)
+        : destAddress(dest), sourceAddress(src), etherSize(size), payload(move(data)), minNumOfIFGsPerPacket(MinNumOfIFGsPerPacket)
     {
     }
 
@@ -250,7 +339,7 @@ public:
     }
 
     // Method to construct the complete Ethernet frame
-    vector<uint8_t> constructFrame(uint32_t MinNumOfIFGsPerPacket)
+    vector<uint8_t> getPacket()
     {
         // Add Destination MAC to the frame
         frame.insert(frame.end(), destAddress.begin(), destAddress.end());
@@ -272,7 +361,7 @@ public:
         frame.insert(frame.begin(), preamble.begin(), preamble.end());
 
         // Insert minimum number of IFGS per packet
-        for (uint32_t i = 0; i < MinNumOfIFGsPerPacket; i++)
+        for (uint32_t i = 0; i < minNumOfIFGsPerPacket; i++)
         {
             frame.push_back(0x07); // Insert IFG byte (0x07)
         }
@@ -292,24 +381,40 @@ class packetStreaming
 private:
     // Full packet stream, including bursts and periodic IFGs
     vector<uint8_t> fullPacket;
-
-    // IFGs between bursts
-    vector<uint8_t> periodicIFG;
-
-    // Ethernet frame details: destination MAC, source MAC, EtherType/Size, and payload
-    array<uint8_t, 6> destAddress;
-    array<uint8_t, 6> sourceAddress;
-    array<uint8_t, 2> etherSize;
-    vector<uint8_t> payload;
+    vector<int8_t> iqSamples;
+    vector<uint8_t> silentIFGs;
 
     // Configuration parameters
     uint64_t lineRate;             // Line rate in bits per second
     uint64_t captureSize;          // Capture size in milliseconds
     uint8_t minNumOfIFGsPerPacket; // Minimum number of IFGs per packet
+    uint16_t maxPacketSize;        // Maximum packet size (in bytes)
+
+    // ORAN Configuration parameters parsed from the file
+    uint8_t scs;           // Subcarrier spacing
+    uint16_t maxNrb;       // Maximum no. of resource blocks
+    uint16_t nrbPerPacket; // No. of resource blocks per packet
+    string payloadType;    //
+
+    // Ethernet frame details: destination MAC, source MAC, EtherType/Size, and payload
+    array<uint8_t, 6> destAddress;
+    array<uint8_t, 6> sourceAddress;
+
+    // variables needed for the calculations
+    uint64_t totalTransmisson;
+    double totalFrames;
+    uint64_t packetsPERsymbol;
+    uint64_t packetsPERslot;
+    uint64_t packetsPERsubframe;
+    uint64_t packetsPERframe;
+    uint64_t totalPackets;
+    uint64_t iqSamplesPERpacket;
+    uint64_t totalSamples;
+    int64_t IFGsNo;
 
 public:
     // Constructor to initialize the packetStreaming object with configuration and payload data
-    packetStreaming(const parseConfigurations &configuration, vector<uint8_t> data)
+    packetStreaming(const parseConfigurations &configuration)
     {
         // Assign configuration values to class members
         lineRate = static_cast<uint64_t>(configuration.LineRate);
@@ -319,59 +424,152 @@ public:
         // Convert configuration addresses and size to byte arrays
         destAddress = intToArray<uint64_t, 6>(configuration.DestAddress);
         sourceAddress = intToArray<uint64_t, 6>(configuration.SourceAddress);
-        etherSize = intToArray<uint64_t, 2>(configuration.MaxPacketSize - ETH_HEADER_SIZE);
 
-        // Resize payload data to match the desired size
-        data.resize(configuration.MaxPacketSize - ETH_HEADER_SIZE);
-        payload = data;
+        scs = static_cast<uint8_t>(configuration.SCS);
+        maxNrb = fixRB(static_cast<uint16_t>(configuration.MaxNrb));
+        nrbPerPacket = fixRB(static_cast<uint16_t>(configuration.NrbPerPacket));
+        payloadType = configuration.PayloadType;
+
+        // Important Calculations
+        totalTransmisson = (lineRate * captureSize * 1000000) / 8;
+
+        totalFrames = static_cast<double>(captureSize / FRAME_PERIOD_MS);
+        packetsPERsymbol = static_cast<uint64_t>(ceil(static_cast<double>(maxNrb) / nrbPerPacket));
+        packetsPERslot = static_cast<uint64_t>(packetsPERsymbol * SYMBOL_PER_SLOT);
+        packetsPERsubframe = static_cast<uint64_t>(packetsPERslot * (scs / SCS_PERIODICITY));
+        packetsPERframe = static_cast<uint64_t>(packetsPERsubframe * SUBFRAME_PER_FRAME);
+        totalPackets = static_cast<uint64_t>(packetsPERframe * (captureSize / FRAME_PERIOD_MS) * totalFrames);
+
+        iqSamplesPERpacket = static_cast<uint64_t>(2 * RE_PER_RB * nrbPerPacket);
+        totalSamples = static_cast<uint64_t>(iqSamplesPERpacket * totalPackets);
+
+        if (payloadType == "fixed")
+        {
+            iqSamples.insert(iqSamples.end(), configuration.iqSamples.begin(), configuration.iqSamples.end());
+        }
+        else if (payloadType == "random")
+        {
+            iqSamples.resize(totalSamples);
+
+            // Random number generator setup
+            random_device rd;  // Seed for the random number engine
+            mt19937 gen(rd()); // Mersenne Twister random number engine
+            uniform_int_distribution<> distrib(-128, 127);
+
+            for (int8_t &byte : iqSamples)
+            {
+                byte = distrib(gen); // Generate a random number and assign it to the vector
+            }
+        }
+        else
+        {
+            throw runtime_error("Wrong PayloadType");
+        }
     }
 
     // Method to construct the full stream of packets and IFGs
-    vector<uint8_t> constructStream()
+    vector<uint8_t> generateStream()
     {
-        // Construct an Ethernet frame using the payload, source, and destination MAC addresses
-        EthFrame burst{destAddress, sourceAddress, etherSize, payload};
-        auto tempFrame = burst.constructFrame(minNumOfIFGsPerPacket);
+        cout << "========= Start Generating the Stream =========" << endl;
 
-        // Calculate total transmission in bytes during the capture time
-        uint64_t totalTransmisson{(lineRate * captureSize * 1000000) / 8};
+        uint8_t frameId{0};
+        uint8_t subframeId{0};
+        uint8_t slotId{0};
+        uint8_t symbolId{0};
+        uint16_t startPrbu{0};
+        uint16_t ecpriSeqid{0};
+        vector<int8_t> data;
+        array<uint8_t, 2> etherSize;
 
-        // Calculate the total number of bursts based on capture size and burst periodicity
-        // uint64_t totalBursts{(captureSize * 1000) / burstPeriodicity};
+        
+        
+        uint64_t sizeOfSamples = iqSamples.size();  // Size of the IQ samples vector 
+        
 
-        // Calculate the burst length in bytes for each burst period
-        // uint64_t burstLength{totalTransmisson / totalBursts};
-
-        // Calculate the number of IFG bytes per burst after accounting for the packet size
-        // uint64_t IFGperBurst{burstLength - (burstSize * tempFrame.size())};
-
-        // Fill periodic IFG with the calculated number of bytes (using IFG byte 0x07)
-        // periodicIFG.assign(IFGperBurst, 0x07);
-
-        // Build the full packet stream
-        /*
-        cout << ".....Start generating the stream....." << endl;
-        for (uint64_t i = 0; i < totalBursts; i++)
+        for (uint64_t packetNo = 0; packetNo < totalPackets; packetNo++)
         {
-            // Insert burstSize number of packets in each burst
-            for (uint64_t i = 0; i < burstSize; i++)
+            
+            // Loop to insert `nrbPerPacket` samples into `data` for the given `packetNo`
+            data.clear();
+            for (uint64_t i = 0; i < iqSamplesPERpacket; ++i)
             {
-                fullPacket.insert(fullPacket.end(), tempFrame.begin(), tempFrame.end());
+                // Calculate the index in the IQ sample vector using modulo for wrapping around
+                int index = (packetNo * iqSamplesPERpacket + i) % sizeOfSamples;
+
+                // Insert the IQ sample at this index into `data`
+                data.push_back(iqSamples[index]);
             }
-            // Insert periodic IFG after each burst
-            fullPacket.insert(fullPacket.end(), periodicIFG.begin(), periodicIFG.end());
+
+
+            OranPacket oranPacket{frameId, subframeId, slotId, symbolId, startPrbu, nrbPerPacket, data};
+            auto ecpriPayload{oranPacket.getPacket()};
+
+            EcpriPacket ecpriPacket{ecpriSeqid, ecpriPayload};
+            auto etherPayload{ecpriPacket.getPacket()};
+
+            etherSize = intToArray<uint64_t, 2>(size(etherPayload));
+
+            EthernetPacket etherPacket{destAddress, sourceAddress, etherSize, etherPayload, minNumOfIFGsPerPacket};
+            auto tempEtherPacket = etherPacket.getPacket();
+
+            if (size(tempEtherPacket) > maxPacketSize)
+            {
+                throw runtime_error("Ethernet Frame exceeds the maximum allowed size");
+            }
+
+            fullPacket.insert(fullPacket.end(), tempEtherPacket.begin(), tempEtherPacket.end());
+            
+            if(packetNo)
+            {
+                if(packetNo%packetsPERframe == 0)
+                    frameId = (frameId + 1)%255;
+                if(packetNo%packetsPERsubframe == 0)
+                    subframeId = (subframeId + 1)%10;
+                if(packetNo%packetsPERslot == 0)
+                    slotId = (slotId + 1)%((scs / SCS_PERIODICITY));
+                if(packetNo%packetsPERsymbol == 0)
+                    symbolId = (symbolId + 1)%14;
+            }
+
+            ecpriSeqid = (packetNo%255);
+            startPrbu = startPrbu + nrbPerPacket;
         }
 
-        // Output the number of bytes in the generated packet stream
-        cout << ".....Done generating....." << endl;
-        cout << "Total Bytes Generated: " << uint64_t(fullPacket.size()) << endl;
-        cout << "Total Bursts Generated: " << uint64_t(totalBursts) << endl;
-        cout << "Burst Size: " << uint64_t(burstSize) << endl;
-        cout << "Total Ethernet Frames: " << uint64_t(totalBursts * burstSize) << endl;
-        cout << "Ethernet Frame Size (Including IFGs): " << uint64_t(tempFrame.size()) << endl;
-        */
-        // Return the full packet stream
+        IFGsNo = static_cast<int64_t>(totalTransmisson - size(fullPacket));
+        silentIFGs.assign(IFGsNo, 0x07);
+
+        if (IFGsNo < 0)
+        {
+            throw runtime_error("Negative IFGs");
+        }
+
+        fullPacket.insert(fullPacket.end(), silentIFGs.begin(), silentIFGs.end());
+
+        cout << "Packets/Symbol: " << packetsPERsymbol << endl;
+        cout << "Packets/Slot: " << packetsPERslot << endl;
+        cout << "Packets/Subframe: " << packetsPERsubframe << endl;
+        cout << "Packets/Frame: " << packetsPERframe << endl;
+        cout << "IQ Samples/Packet: " << iqSamplesPERpacket << endl;
+        cout << "Total Bytes: " << totalTransmisson << endl;
+        cout << "Total Generated: " << size(fullPacket) << endl;
+        cout << "Total Frames: " << totalFrames << endl;
+        cout << "Total Packets: " << totalPackets << endl;
+        cout << "Total IQ Samples: " << totalSamples << endl;
+        cout << "Remaining IFGs: " << IFGsNo << endl;
+        cout << "========= Done Generating the Stream =========" << endl;
         return fullPacket;
+    }
+
+    uint16_t fixRB(uint16_t RB)
+    {
+        if (RB == 0)
+        {
+            return uint16_t(273);
+        }
+        else
+        {
+            return RB;
+        }
     }
 };
 
@@ -383,7 +581,7 @@ void writePacketStreamToFile(const vector<uint8_t> &fullPacketStream, const stri
     // Counter to insert a line break after every 4 bytes
     uint8_t counter{0};
 
-    cout << ".....Start exporting stream to the text file....." << endl;
+    cout << "========= Start Exporting the Stream =========" << endl;
     // Loop through the fullPacketStream and write each byte to the text file
     for (auto byte : fullPacketStream)
     {
@@ -401,56 +599,29 @@ void writePacketStreamToFile(const vector<uint8_t> &fullPacketStream, const stri
             counter++;
         }
     }
-    cout << ".....Done exporting....." << endl;
+    cout << "========= Done Exporting the Stream =========" << endl;
+
     // Close the file after writing is done
     MyFile.close();
 }
 
 //==================================================================================//
 int main()
-{ /*
-  // Initialize a vector of payload data (currently with a single byte of 0x00)
-  vector<uint8_t> data = {0x00};
+{
+    // Vector to store the full packet stream generated later
+    vector<uint8_t> fullPacketStream;
 
-  // Vector to store the full packet stream generated later
-  vector<uint8_t> fullPacketStream;
+    // Parse configuration file "second_milestone.txt" to extract Ethernet settings
+    parseConfigurations configuration("second_milestone.txt");
 
-  // Parse configuration file "first_milestone.txt" to extract Ethernet settings
-  parseConfigurations configuration("first_milestone.txt");
+    // Create packetStreaming object using configuration data and payload
+    packetStreaming packetStreaming{configuration};
 
-  // Create packetStreaming object using configuration data and payload
-  packetStreaming fullStream{configuration, data};
+    // Construct the full packet stream with bursts and IFGs
+    fullPacketStream = packetStreaming.generateStream();
 
-  // Construct the full packet stream with bursts and IFGs
-  fullPacketStream = fullStream.constructStream();
-
-  // Call the new function to write the full packet stream to "packets.txt"
-  writePacketStreamToFile(fullPacketStream, "packets.txt");
-  */
-
-    // Initialize the parseConfigurations class with the config file
-    parseConfigurations config("second_milstone.txt");
-
-    // Display parsed Ethernet configuration
-    cout << "Ethernet Configuration:" << endl;
-    cout << "Line Rate: " << static_cast<int>(config.LineRate) << " Gbps" << endl;
-    cout << "Capture Size: " << static_cast<int>(config.CaptureSizeMs) << " ms" << endl;
-    cout << "Min Num of IFGs per Packet: " << static_cast<int>(config.MinNumOfIFGsPerPacket) << endl;
-    cout << "Destination MAC Address: " << config.DestAddress << endl;
-    cout << "Source MAC Address: " << config.SourceAddress << endl;
-    cout << "Max Packet Size: " << config.MaxPacketSize << " bytes" << endl;
-
-    // Display parsed ORAN configuration
-    cout << "\nORAN Configuration:" << endl;
-    cout << "Subcarrier Spacing: " << static_cast<int>(config.SCS) << endl;
-    cout << "Max NRB: " << config.MaxNrb << endl;
-    cout << "NRB per Packet: " << static_cast<int>(config.NrbPerPacket) << endl;
-    cout << "Payload Type: " << config.PayloadType << endl;
-
-    // Display IQ samples
-    cout << "\nParsed IQ Samples:" << endl;
-    cout << "I Samples: " << config.iSamples[4] << endl;
-    cout << "Q Samples: " << config.qSamples[4] << endl;   
+    // Call the new function to write the full packet stream to "packets.txt"
+    writePacketStreamToFile(fullPacketStream, "packets.txt");
 
     return 0;
 }
