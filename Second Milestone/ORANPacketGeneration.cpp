@@ -505,26 +505,27 @@ public:
             fullPacket.insert(fullPacket.end(), tempEtherPacket.begin(), tempEtherPacket.end());
 
             // Update IDs and start PRBU for the next packet
-            if (packetNo)
+
+            if (packetNo != 0 && (packetNo % packetsPERsymbol == 0))
             {
-                if (packetNo % packetsPERsymbol == 0)
-                {
-                    symbolId = (symbolId + 1) % 14; // Reset after 14 symbols (1 slot)
-                }
+                symbolId = (symbolId + 1) % SYMBOL_PER_SLOT; // Increment symbolId after all packets for the current symbol are transmitted
 
-                if (packetNo % packetsPERslot == 0)
+                if (symbolId == 0)
                 {
-                    slotId = (slotId + 1) % slotsPerFrame; // Reset after the number of slots in a frame.
-                }
+                    // If symbolId wraps back to 0, increment slotId
+                    slotId = (slotId + 1) % slotsPerFrame;
 
-                if (packetNo % packetsPERsubframe == 0)
-                {
-                    subframeId = (subframeId + 1) % 10; // Reset after 10 subframes (1 frame).
-                }
+                    if (slotId == 0)
+                    {
+                        // If slotId wraps back to 0, increment subframeId
+                        subframeId = (subframeId + 1) % 10; // 10 subframes per frame
 
-                if (packetNo % packetsPERframe == 0)
-                {
-                    frameId = (frameId + 1) % 256; // Reset frameId after 256 frames.
+                        if (subframeId == 0)
+                        {
+                            // If subframeId wraps back to 0, increment frameId
+                            frameId = (frameId + 1) % 256; // 256 frames
+                        }
+                    }
                 }
             }
 
