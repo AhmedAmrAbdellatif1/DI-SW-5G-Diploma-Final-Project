@@ -24,7 +24,7 @@
 #define SCS_PERIODICITY 15
 #define SUBFRAME_PER_FRAME 10
 #define SYMBOL_PER_SLOT 14
-#define RE_PER_RB 14
+#define RE_PER_RB 12
 
 using namespace std;
 
